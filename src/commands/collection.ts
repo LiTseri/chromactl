@@ -167,8 +167,8 @@ Examples:
         fmt.verbose('Ensuring ChromaDB server is running...');
         const client = await serverManager.ensureRunning();
 
-        // List collections
-        const collectionNames = await client.listCollections();
+        // List collections (chromadb v3 returns Collection objects, not names)
+        const collectionNames = (await client.listCollections()).map((c) => c.name);
 
         if (fmt.isJson) {
           const results: Array<{ name: string; documents: number; schema: string | null }> = [];

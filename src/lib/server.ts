@@ -36,33 +36,65 @@ export interface ServerManagerConfig {
  * Throws a clear ServerError if the binary cannot be found.
  */
 function resolveChromaBinary(): string {
+  const require = createRequire(import.meta.url);
+  const nodeFs = require('node:fs') as typeof import('node:fs');
+
+  // Locate the chromadb package root.
+  //
+  // NOTE: we cannot use `require.resolve('chromadb/package.json')` because
+  // chromadb ships an `exports` map that does not expose the `./package.json`
+  // subpath. Doing so throws ERR_PACKAGE_PATH_NOT_EXPORTED on Node's modern
+  // resolver. Instead we resolve the package's main entry (which the exports
+  // map does allow) and walk up to the directory that owns its package.json.
+  let pkgRoot: string;
   try {
-    const require = createRequire(import.meta.url);
-    const pkgPath = require.resolve('chromadb/package.json');
-    const cliBinary = path.join(path.dirname(pkgPath), 'dist', 'cli.mjs');
-
-    // Verify the file actually exists (synchronous check is fine at startup)
-    try {
-      const stat = require('node:fs').statSync(cliBinary);
-      if (!stat.isFile()) {
-        throw new Error('not a file');
+    let dir = path.dirname(require.resolve('chromadb'));
+    for (;;) {
+      const candidate = path.join(dir, 'package.json');
+      if (nodeFs.existsSync(candidate)) {
+        const name = (JSON.parse(nodeFs.readFileSync(candidate, 'utf-8')) as { name?: string })
+          .name;
+        if (name === 'chromadb') break;
       }
-    } catch {
-      throw new ServerError(
-        `ChromaDB CLI binary not found at: ${cliBinary}`,
-        'Ensure you have a compatible version of the chromadb package installed (v3.4.3+). ' +
-          'Run: npm install chromadb@latest',
-      );
+      const parent = path.dirname(dir);
+      if (parent === dir) {
+        throw new Error('chromadb package root not found');
+      }
+      dir = parent;
     }
-
-    return cliBinary;
-  } catch (err) {
-    if (err instanceof ServerError) throw err;
+    pkgRoot = dir;
+  } catch {
     throw new ServerError(
       'Could not resolve the chromadb package. Is it installed?',
       'Run: npm install chromadb',
     );
   }
+
+  // Derive the CLI binary path from the package's `bin` field, falling back to
+  // the conventional dist/cli.mjs location.
+  const pkg = JSON.parse(nodeFs.readFileSync(path.join(pkgRoot, 'package.json'), 'utf-8')) as {
+    bin?: string | Record<string, string>;
+  };
+  const binRel =
+    typeof pkg.bin === 'string' ? pkg.bin : (pkg.bin?.chroma ?? pkg.bin?.chromadb);
+  const cliBinary = binRel
+    ? path.resolve(pkgRoot, binRel)
+    : path.join(pkgRoot, 'dist', 'cli.mjs');
+
+  // Verify the file actually exists (synchronous check is fine at startup)
+  try {
+    if (!nodeFs.statSync(cliBinary).isFile()) {
+      throw new Error('not a file');
+    }
+  } catch {
+    throw new ServerError(
+      `ChromaDB CLI binary not found at: ${cliBinary}`,
+      'Ensure you have a compatible version of the chromadb package installed (v3.4.3+). ' +
+        'Run: npm install chromadb@latest',
+    );
+  }
+
+  return cliBinary;
 }
 
 /**

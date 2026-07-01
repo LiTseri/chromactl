@@ -1,2 +1,7 @@
 allowBuilds:
   esbuild: true
+  onnxruntime-node: true
+  protobufjs: true
+  sharp: false
+overrides:
+  chromactl: 'link:'

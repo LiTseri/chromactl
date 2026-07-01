@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import path from 'node:path';
-import { ChromaClient, IncludeEnum } from 'chromadb';
+import { ChromaClient } from 'chromadb';
+import type { Where } from 'chromadb';
 
 import type {
   GlobalOptions,
@@ -14,6 +15,7 @@ import { ServerManager } from '../lib/server.js';
 import { EmbeddingManager } from '../lib/embedding.js';
 import { InvalidArgumentError, CollectionNotFoundError } from '../lib/errors.js';
 import { distanceToSimilarity, noopEmbeddingFunction } from '../lib/db.js';
+import type { IncludeField } from '../lib/db.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -174,23 +176,21 @@ async function searchAction(
     `Querying collection "${collectionName}" for ${nResults} results...`,
   );
 
+  // chromadb v3 expects queryEmbeddings as a 2-D array (one row per query)
+  // and include values as the lowercase string members of Include.
   const queryParams: {
-    queryEmbeddings: number[];
+    queryEmbeddings: number[][];
     nResults: number;
-    where?: Record<string, unknown>;
-    include: IncludeEnum[];
+    where?: Where;
+    include: IncludeField[];
   } = {
-    queryEmbeddings: queryEmbedding,
+    queryEmbeddings: [queryEmbedding],
     nResults,
-    include: [
-      IncludeEnum.Documents,
-      IncludeEnum.Metadatas,
-      IncludeEnum.Distances,
-    ],
+    include: ['documents', 'metadatas', 'distances'],
   };
 
   if (whereFilter) {
-    queryParams.where = whereFilter;
+    queryParams.where = whereFilter as Where;
   }
 
   const queryResponse = await collection.query(queryParams);

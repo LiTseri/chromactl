@@ -1,20 +1,29 @@
-import {
-  ChromaClient,
-  IncludeEnum,
-} from 'chromadb';
-import type { Collection, IEmbeddingFunction } from 'chromadb';
+import { ChromaClient } from 'chromadb';
+import type { Collection, EmbeddingFunction, Where } from 'chromadb';
 import {
   ChromaDBError,
   CollectionNotFoundError,
 } from './errors.js';
 
 /**
+ * Fields that can be requested in query/get results. Mirrors chromadb v3's
+ * internal `Include` string-literal union, which the package does not export.
+ * A structurally-identical union is assignable to the SDK's `Include[]` params.
+ */
+export type IncludeField =
+  | 'distances'
+  | 'documents'
+  | 'embeddings'
+  | 'metadatas'
+  | 'uris';
+
+/**
  * No-op embedding function for collections managed by chromactl.
- * ChromaDB's getCollection requires an IEmbeddingFunction, but chromactl
+ * ChromaDB's getCollection requires an EmbeddingFunction, but chromactl
  * manages embeddings externally via EmbeddingManager. This stub satisfies
  * the type requirement without triggering any model downloads or computation.
  */
-export const noopEmbeddingFunction: IEmbeddingFunction = {
+export const noopEmbeddingFunction: EmbeddingFunction = {
   generate: async () => [],
 };
 
@@ -30,7 +39,8 @@ export function createChromaClient(host: string, port: number): ChromaClient {
  */
 export async function listCollections(client: ChromaClient): Promise<string[]> {
   try {
-    return await client.listCollections();
+    // chromadb v3's listCollections() returns Collection objects, not names.
+    return (await client.listCollections()).map((collection) => collection.name);
   } catch (error) {
     throw wrapChromaError(error, 'Failed to list collections');
   }
@@ -150,23 +160,23 @@ export async function queryCollection(
   distances: number[];
 }> {
   try {
-    const includeEnums = params.include
-      ? params.include.map(toIncludeEnum)
-      : [IncludeEnum.Documents, IncludeEnum.Metadatas, IncludeEnum.Distances];
+    const include: IncludeField[] =
+      (params.include as IncludeField[] | undefined) ??
+      ['documents', 'metadatas', 'distances'];
 
     const response = await collection.query({
       queryEmbeddings: params.queryEmbeddings,
       nResults: params.nResults,
-      where: params.where as Record<string, unknown> | undefined,
-      include: includeEnums,
+      where: params.where as Where | undefined,
+      include,
     });
 
-    // ChromaDB returns MultiQueryResponse with nested arrays (one per query).
-    // Extract the first query's results.
+    // ChromaDB returns nested arrays (one per query). Extract the first query.
     const ids = response.ids[0] ?? [];
     const documents = response.documents[0] ?? [];
     const metadatas = response.metadatas[0] ?? [];
-    const distances = response.distances?.[0] ?? [];
+    // Distances may contain nulls when the field is not returned; normalize.
+    const distances = (response.distances?.[0] ?? []).map((d) => d ?? 0);
 
     return {
       ids,
@@ -195,14 +205,13 @@ export async function getCollectionDocuments(
   metadatas: (Record<string, string | number | boolean> | null)[];
 }> {
   try {
-    const includeEnums = params?.include
-      ? params.include.map(toIncludeEnum)
-      : [IncludeEnum.Metadatas];
+    const include: IncludeField[] =
+      (params?.include as IncludeField[] | undefined) ?? ['metadatas'];
 
     const response = await collection.get({
-      where: params?.where as Record<string, unknown> | undefined,
+      where: params?.where as Where | undefined,
       limit: params?.limit,
-      include: includeEnums,
+      include,
     });
 
     return {
@@ -225,24 +234,6 @@ export function distanceToSimilarity(distance: number): number {
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
-
-/**
- * Convert a string include value to the chromadb IncludeEnum.
- */
-function toIncludeEnum(value: string): IncludeEnum {
-  switch (value) {
-    case 'documents':
-      return IncludeEnum.Documents;
-    case 'embeddings':
-      return IncludeEnum.Embeddings;
-    case 'metadatas':
-      return IncludeEnum.Metadatas;
-    case 'distances':
-      return IncludeEnum.Distances;
-    default:
-      return value as IncludeEnum;
-  }
-}
 
 /**
  * Check if an error is a ChromaDB "not found" error.

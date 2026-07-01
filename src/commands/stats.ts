@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import fs from 'node:fs';
 import path from 'node:path';
-import { ChromaClient, IncludeEnum } from 'chromadb';
+import { ChromaClient } from 'chromadb';
 
 import type {
   GlobalOptions,
@@ -14,6 +14,7 @@ import { resolveConfig, getDbPath, getProjectDir } from '../lib/config.js';
 import { ServerManager } from '../lib/server.js';
 import { CollectionNotFoundError } from '../lib/errors.js';
 import { noopEmbeddingFunction } from '../lib/db.js';
+import type { IncludeField } from '../lib/db.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -129,8 +130,8 @@ async function showDatabaseStats(
 ): Promise<void> {
   formatter.verbose('Fetching database statistics...');
 
-  // List all collections (returns string[] of collection names)
-  const collectionNames = await client.listCollections();
+  // chromadb v3's listCollections() returns Collection objects, not names.
+  const collectionNames = (await client.listCollections()).map((c) => c.name);
 
   // Count documents in each collection
   const collectionStats: Array<{ name: string; documentCount: number }> = [];
@@ -215,7 +216,7 @@ async function showCollectionStats(
 
   do {
     const page = await collection.get({
-      include: [IncludeEnum.Metadatas],
+      include: ['metadatas'] as IncludeField[],
       limit: PAGE_SIZE,
       offset,
     });
